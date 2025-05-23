@@ -20,8 +20,8 @@
 #include "serdes/serdes.h"
 #include "common/nixl_log.h"
 
-#include <optional>
 #include <limits>
+#include <optional>
 #include <string.h>
 #include <unistd.h>
 #include "absl/strings/numbers.h"
@@ -441,6 +441,7 @@ void nixlUcxEngine::progressFunc()
                 while (uw->progress())
                     made_progress = true;
 
+                NIXL_INFO << "this:" << this << " ucp_worker_arm()";
                 status = ucp_worker_arm(uw->getWorker());
             } while (status == UCS_ERR_BUSY);
             NIXL_ASSERT(status == UCS_OK);
@@ -576,6 +577,7 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     if (pthrOn) {
         for (auto &uw: uws) {
             int fd;
+            NIXL_INFO << "this:" << this << " ucp_worker_get_efd()";
             ucs_status_t ret = ucp_worker_get_efd(uw->getWorker(), &fd);
             if (ret != UCS_OK) {
                 NIXL_ERROR << "Couldn't obtain fd for a worker, status: " << ucs_status_string(ret);
@@ -663,6 +665,7 @@ nixlUcxEngine::connectionCheckAmCb(void *arg, const void *header,
                                    size_t length,
                                    const ucp_am_recv_param_t *param)
 {
+    NIXL_INFO << "this:" << arg << " nixlUcxEngine::connectionCheckAmCb() IN";
     struct nixl_ucx_am_hdr* hdr = (struct nixl_ucx_am_hdr*) header;
 
     std::string remote_agent( (char*) data, length);
@@ -670,20 +673,24 @@ nixlUcxEngine::connectionCheckAmCb(void *arg, const void *header,
 
     if(hdr->op != CONN_CHECK) {
         //is this the best way to ERR?
+        NIXL_INFO << "this:" << arg << " nixlUcxEngine::connectionCheckAmCb() OUT UCS_ERR_INVALID_PARAM";
         return UCS_ERR_INVALID_PARAM;
     }
 
     //send_am should be forcing EAGER protocol
     if((param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV) != 0) {
         //is this the best way to ERR?
+        NIXL_INFO << "this:" << arg << " nixlUcxEngine::connectionCheckAmCb() OUT UCS_ERR_INVALID_PARAM";
         return UCS_ERR_INVALID_PARAM;
     }
 
     if(engine->checkConn(remote_agent)) {
         //TODO: received connect AM from agent we don't recognize
+        NIXL_INFO << "this:" << arg << " nixlUcxEngine::connectionCheckAmCb() OUT UCS_ERR_INVALID_PARAM";
         return UCS_ERR_INVALID_PARAM;
     }
 
+    NIXL_INFO << "this:" << arg << " nixlUcxEngine::connectionCheckAmCb() OUT OK";
     return UCS_OK;
 }
 
@@ -693,18 +700,21 @@ nixlUcxEngine::connectionTermAmCb (void *arg, const void *header,
                                    size_t length,
                                    const ucp_am_recv_param_t *param)
 {
+    NIXL_INFO << "this:" << arg << " nixlUcxEngine::connectionTermAmCb() IN";
     struct nixl_ucx_am_hdr* hdr = (struct nixl_ucx_am_hdr*) header;
 
     std::string remote_agent( (char*) data, length);
 
     if(hdr->op != DISCONNECT) {
         //is this the best way to ERR?
+        NIXL_INFO << "this:" << arg << " nixlUcxEngine::connectionTermAmCb() OUT UCS_ERR_INVALID_PARAM";
         return UCS_ERR_INVALID_PARAM;
     }
 
     //send_am should be forcing EAGER protocol
     if((param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV) != 0) {
         //is this the best way to ERR?
+        NIXL_INFO << "this:" << arg << " nixlUcxEngine::connectionTermAmCb() OUT UCS_ERR_INVALID_PARAM";
         return UCS_ERR_INVALID_PARAM;
     }
 /*
@@ -715,6 +725,7 @@ nixlUcxEngine::connectionTermAmCb (void *arg, const void *header,
         return UCS_ERR_INVALID_PARAM;
     }
 */
+    NIXL_INFO << "this:" << arg << " nixlUcxEngine::connectionTermAmCb() OUT OK";
     return UCS_OK;
 }
 
@@ -1166,6 +1177,7 @@ nixl_status_t nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
                                            nixlUcxReq &req,
                                            size_t worker_id) const
 {
+    NIXL_INFO << "this:" << this << " nixlUcxEngine::notifSendPriv() IN";
     nixlSerDes ser_des;
     // TODO - temp fix, need to have an mpool
     static struct nixl_ucx_am_hdr hdr;
@@ -1176,6 +1188,7 @@ nixl_status_t nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
 
     if(search == remoteConnMap.end()) {
         //TODO: err: remote connection not found
+        NIXL_INFO << "this:" << this << " nixlUcxEngine::notifSendPriv() OUT";
         return NIXL_ERR_NOT_FOUND;
     }
 
@@ -1196,6 +1209,7 @@ nixl_status_t nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
         nixlUcxIntReq* nReq = (nixlUcxIntReq*)req;
         nReq->amBuffer = std::move(buffer);
     }
+    NIXL_INFO << "this:" << this << " nixlUcxEngine::notifSendPriv() OUT";
     return ret;
 }
 
@@ -1205,6 +1219,7 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
                          size_t length,
                          const ucp_am_recv_param_t *param)
 {
+    NIXL_INFO << "this:" << arg << " nixlUcxEngine::notifAmCb() IN";
     struct nixl_ucx_am_hdr* hdr = (struct nixl_ucx_am_hdr*) header;
     nixlSerDes ser_des;
 
@@ -1214,18 +1229,21 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
 
     if(hdr->op != NOTIF_STR) {
         //is this the best way to ERR?
+        NIXL_INFO << "this:" << arg << " nixlUcxEngine::notifAmCb() OUT";
         return UCS_ERR_INVALID_PARAM;
     }
 
     //send_am should be forcing EAGER protocol
     if((param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV) != 0) {
         //is this the best way to ERR?
+        NIXL_INFO << "this:" << arg << " nixlUcxEngine::notifAmCb() OUT";
         return UCS_ERR_INVALID_PARAM;
     }
 
     ser_des.importStr(ser_str);
     remote_name = ser_des.getStr("name");
     msg = ser_des.getStr("msg");
+    NIXL_INFO << "this:" << arg << " nixlUcxEngine::notifAmCb() remote_name:" << remote_name << ", msg:" << msg;
 
     if (engine->isProgressThread()) {
         /* Append to the private list to allow batching */
@@ -1234,6 +1252,7 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
         engine->notifMainList.push_back(std::make_pair(remote_name, msg));
     }
 
+    NIXL_INFO << "this:" << arg << " nixlUcxEngine::notifAmCb() OUT";
     return UCS_OK;
 }
 
@@ -1268,6 +1287,7 @@ void nixlUcxEngine::notifProgress()
 
 nixl_status_t nixlUcxEngine::getNotifs(notif_list_t &notif_list)
 {
+    NIXL_INFO << "this:" << this << " nixlUcxEngine::getNotifs()";
     if (notif_list.size()!=0)
         return NIXL_ERR_INVALID_PARAM;
 
@@ -1281,6 +1301,7 @@ nixl_status_t nixlUcxEngine::getNotifs(notif_list_t &notif_list)
 
 nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std::string &msg) const
 {
+    NIXL_INFO << "this:" << this << " nixlUcxEngine::genNotif()";
     nixl_status_t ret;
     nixlUcxReq req;
     size_t wid = getWorkerId();
