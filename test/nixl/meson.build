@@ -34,6 +34,11 @@ nixl_test_app  = executable('nixl_test', 'nixl_test.cpp',
                            include_directories: [nixl_inc_dirs, utils_inc_dirs, '../../src/utils/serdes'],
                            link_with: [serdes_lib], install: true)
 
+nixl_multi_test_app  = executable('nixl_multi_test', 'nixl_multi_test.cpp',
+                                 dependencies: [nixl_dep, nixl_infra, stream_interface, thread_dep],
+                                 include_directories: [nixl_inc_dirs, utils_inc_dirs, '../../src/utils/serdes'],
+                                 link_with: [serdes_lib], install: true)
+
 plugin_test = executable('test_plugin',
                         'test_plugin.cpp',
                         dependencies: [nixl_dep, cuda_dep],
