@@ -20,8 +20,8 @@
 #include "serdes/serdes.h"
 #include "common/nixl_log.h"
 
-#include <optional>
 #include <limits>
+#include <optional>
 #include <string.h>
 #include <unistd.h>
 #include "absl/strings/numbers.h"
@@ -455,6 +455,7 @@ void nixlUcxEngine::progressFunc()
                 while (uw->progress())
                     made_progress = true;
 
+                NIXL_INFO << "this:" << this << " ucp_worker_arm()";
                 status = ucp_worker_arm(uw->getWorker());
             } while (status == UCS_ERR_BUSY);
             NIXL_ASSERT(status == UCS_OK);
@@ -590,6 +591,7 @@ nixlUcxEngine::nixlUcxEngine (const nixlBackendInitParams* init_params)
     if (pthrOn) {
         for (auto &uw: uws) {
             int fd;
+            NIXL_INFO << "this:" << this << " ucp_worker_get_efd()";
             ucs_status_t ret = ucp_worker_get_efd(uw->getWorker(), &fd);
             if (ret != UCS_OK) {
                 NIXL_ERROR << "Couldn't obtain fd for a worker, status: " << ucs_status_string(ret);
@@ -677,6 +679,7 @@ nixlUcxEngine::connectionCheckAmCb(void *arg, const void *header,
                                    size_t length,
                                    const ucp_am_recv_param_t *param)
 {
+    NIXL_INFO << "this:" << arg << " nixlUcxEngine::connectionCheckAmCb() IN";
     std::string remote_agent( (char*) data, length);
     nixlUcxEngine* engine = (nixlUcxEngine*) arg;
 
@@ -688,6 +691,7 @@ nixlUcxEngine::connectionCheckAmCb(void *arg, const void *header,
         return UCS_OK;
     }
 
+    NIXL_INFO << "this:" << arg << " nixlUcxEngine::connectionCheckAmCb() OUT OK";
     return UCS_OK;
 }
 
@@ -697,6 +701,7 @@ nixlUcxEngine::connectionTermAmCb (void *arg, const void *header,
                                    size_t length,
                                    const ucp_am_recv_param_t *param)
 {
+    NIXL_INFO << "this:" << arg << " nixlUcxEngine::connectionTermAmCb() IN";
     std::string remote_agent( (char*) data, length);
 
     NIXL_ASSERT(!(param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV));
@@ -710,6 +715,7 @@ nixlUcxEngine::connectionTermAmCb (void *arg, const void *header,
         return UCS_ERR_INVALID_PARAM;
     }
 */
+    NIXL_INFO << "this:" << arg << " nixlUcxEngine::connectionTermAmCb() OUT OK";
     return UCS_OK;
 }
 
@@ -1144,6 +1150,7 @@ nixl_status_t nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
                                            nixlUcxReq &req,
                                            size_t worker_id) const
 {
+    NIXL_INFO << "this:" << this << " nixlUcxEngine::notifSendPriv() IN";
     nixlSerDes ser_des;
     nixl_status_t ret;
 
@@ -1151,6 +1158,7 @@ nixl_status_t nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
 
     if(search == remoteConnMap.end()) {
         //TODO: err: remote connection not found
+        NIXL_INFO << "this:" << this << " nixlUcxEngine::notifSendPriv() OUT";
         return NIXL_ERR_NOT_FOUND;
     }
 
@@ -1167,6 +1175,7 @@ nixl_status_t nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
         nixlUcxIntReq* nReq = (nixlUcxIntReq*)req;
         nReq->amBuffer = std::move(buffer);
     }
+    NIXL_INFO << "this:" << this << " nixlUcxEngine::notifSendPriv() OUT";
     return ret;
 }
 
@@ -1176,6 +1185,7 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
                          size_t length,
                          const ucp_am_recv_param_t *param)
 {
+    NIXL_INFO << "this:" << arg << " nixlUcxEngine::notifAmCb() IN";
     nixlSerDes ser_des;
 
     std::string ser_str( (char*) data, length);
@@ -1189,6 +1199,7 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
     ser_des.importStr(ser_str);
     remote_name = ser_des.getStr("name");
     msg = ser_des.getStr("msg");
+    NIXL_INFO << "this:" << arg << " nixlUcxEngine::notifAmCb() remote_name:" << remote_name << ", msg:" << msg;
 
     if (engine->isProgressThread()) {
         /* Append to the private list to allow batching */
@@ -1197,6 +1208,7 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
         engine->notifMainList.push_back(std::make_pair(remote_name, msg));
     }
 
+    NIXL_INFO << "this:" << arg << " nixlUcxEngine::notifAmCb() OUT";
     return UCS_OK;
 }
 
@@ -1213,6 +1225,7 @@ void nixlUcxEngine::notifProgress()
 
 nixl_status_t nixlUcxEngine::getNotifs(notif_list_t &notif_list)
 {
+    NIXL_INFO << "this:" << this << " nixlUcxEngine::getNotifs()";
     if (notif_list.size()!=0)
         return NIXL_ERR_INVALID_PARAM;
 
@@ -1226,6 +1239,7 @@ nixl_status_t nixlUcxEngine::getNotifs(notif_list_t &notif_list)
 
 nixl_status_t nixlUcxEngine::genNotif(const std::string &remote_agent, const std::string &msg) const
 {
+    NIXL_INFO << "this:" << this << " nixlUcxEngine::genNotif()";
     nixl_status_t ret;
     nixlUcxReq req;
     size_t wid = getWorkerId();

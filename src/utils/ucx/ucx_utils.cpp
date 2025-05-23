@@ -58,6 +58,7 @@ static void err_cb_wrapper(void *arg, ucp_ep_h ucp_ep, ucs_status_t status)
 
 void nixlUcxEp::err_cb(ucp_ep_h ucp_ep, ucs_status_t status)
 {
+    NIXL_INFO << "this:" << this << " nixlUcxEp::err_cb() IN";
     ucs_status_ptr_t request;
 
     NIXL_DEBUG << "ep " << eph << ": state " << state
@@ -72,13 +73,17 @@ void nixlUcxEp::err_cb(ucp_ep_h ucp_ep, ucs_status_t status)
         // The error was already handled, nothing to do
     case NIXL_UCX_EP_STATE_DISCONNECTED:
         // The EP has been disconnected, nothing to do
+        NIXL_INFO << "this:" << this << " nixlUcxEp::err_cb() OUT";
         return;
     case NIXL_UCX_EP_STATE_CONNECTED:
         setState(NIXL_UCX_EP_STATE_FAILED);
+        NIXL_INFO << "this:" << this << " ucp_ep_close_nb()";
         request = ucp_ep_close_nb(ucp_ep, UCP_EP_CLOSE_MODE_FORCE);
         if (UCS_PTR_IS_PTR(request)) {
+            NIXL_INFO << "this:" << this << " ucp_request_free()";
             ucp_request_free(request);
         }
+        NIXL_INFO << "this:" << this << " nixlUcxEp::err_cb() OUT";
         return;
     }
     NIXL_FATAL << "Invalid endpoint state: " << state;
@@ -113,6 +118,7 @@ nixlUcxEp::closeImpl(ucp_ep_close_flags_t flags)
         eph = nullptr;
         return NIXL_ERR_REMOTE_DISCONNECT;
     case NIXL_UCX_EP_STATE_CONNECTED:
+        NIXL_INFO << "this:" << this << " ucp_ep_close_nbx()";
         request = ucp_ep_close_nbx(eph, &req_param);
         if (request == nullptr) {
             eph = nullptr;
@@ -124,6 +130,7 @@ nixlUcxEp::closeImpl(ucp_ep_close_flags_t flags)
             return ucx_status_to_nixl(UCS_PTR_STATUS(request));
         }
 
+        NIXL_INFO << "this:" << this << " ucp_request_free()";
         ucp_request_free(request);
         eph = nullptr;
         return NIXL_SUCCESS;
@@ -135,6 +142,7 @@ nixlUcxEp::closeImpl(ucp_ep_close_flags_t flags)
 nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void* addr,
                      ucp_err_handling_mode_t err_handling_mode)
 {
+    NIXL_INFO << "this:" << this << " nixlUcxEp::nixlUcxEp() IN";
     ucp_ep_params_t ep_params;
     nixl_status_t status;
 
@@ -151,14 +159,17 @@ nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void* addr,
         setState(NIXL_UCX_EP_STATE_CONNECTED);
     else
         throw std::runtime_error("failed to create ep");
+    NIXL_INFO << "this:" << this << " nixlUcxEp::nixlUcxEp() OUT";
 }
 
- nixlUcxEp::~nixlUcxEp()
- {
-     nixl_status_t status = disconnect_nb();
-     if (status)
-         NIXL_ERROR << "Failed to disconnect ep with status " << status;
- }
+nixlUcxEp::~nixlUcxEp()
+{
+    NIXL_INFO << "this:" << this << " nixlUcxEp::~nixlUcxEp() IN";
+    nixl_status_t status = disconnect_nb();
+    if (status)
+        NIXL_ERROR << "Failed to disconnect ep with status " << status;
+    NIXL_INFO << "this:" << this << " nixlUcxEp::~nixlUcxEp() OUT";
+}
 
 /* ===========================================
  * EP management
@@ -180,6 +191,7 @@ int nixlUcxEp::rkeyImport(void* addr, size_t size, nixlUcxRkey &rkey)
 {
     ucs_status_t status;
 
+    NIXL_INFO << "this:" << this << " ucp_ep_rkey_unpack()";
     status = ucp_ep_rkey_unpack(eph, addr, &rkey.rkeyh);
     if (status != UCS_OK)
     {
@@ -192,6 +204,7 @@ int nixlUcxEp::rkeyImport(void* addr, size_t size, nixlUcxRkey &rkey)
 
 void nixlUcxEp::rkeyDestroy(nixlUcxRkey &rkey)
 {
+    NIXL_INFO << "this:" << this << " ucp_rkey_destroy()";
     ucp_rkey_destroy(rkey.rkeyh);
 }
 
@@ -210,6 +223,7 @@ nixl_status_t nixlUcxEp::sendAm(unsigned msg_id,
     param.op_attr_mask |= UCP_OP_ATTR_FIELD_FLAGS;
     param.flags         = flags;
 
+    NIXL_INFO << "this:" << this << " ucp_am_send_nbx()";
     request = ucp_am_send_nbx(eph, msg_id, hdr, hdr_len, buffer, len, &param);
 
     if (UCS_PTR_IS_PTR(request)) {
@@ -239,6 +253,7 @@ nixl_status_t nixlUcxEp::read(uint64_t raddr, nixlUcxRkey &rk,
         .memh         = mem.memh,
     };
 
+    NIXL_INFO << "this:" << this << " ucp_get_nbx()";
     ucs_status_ptr_t request = ucp_get_nbx(eph, laddr, size, raddr,
                                            rk.rkeyh, &param);
     if (UCS_PTR_IS_PTR(request)) {
@@ -264,6 +279,7 @@ nixl_status_t nixlUcxEp::write(void *laddr, nixlUcxMem &mem,
         .memh         = mem.memh,
     };
 
+    NIXL_INFO << "this:" << this << " ucp_put_nbx()";
     ucs_status_ptr_t request = ucp_put_nbx(eph, laddr, size, raddr,
                                            rk.rkeyh, &param);
     if (UCS_PTR_IS_PTR(request)) {
@@ -288,6 +304,7 @@ nixl_status_t nixlUcxEp::estimateCost(size_t size,
         .field_mask = UCP_EP_PERF_ATTR_FIELD_ESTIMATED_TIME,
     };
 
+    NIXL_INFO << "this:" << this << " ucp_ep_evaluate_perf()";
     ucs_status_t status = ucp_ep_evaluate_perf(this->eph, &params, &cost_result);
     if (status != UCS_OK) {
         NIXL_ERROR << "ucp_ep_evaluate_perf failed: " << ucs_status_string(status);
@@ -307,6 +324,7 @@ nixl_status_t nixlUcxEp::flushEp(nixlUcxReq &req)
     ucs_status_ptr_t request;
 
     param.op_attr_mask = 0;
+    NIXL_INFO << "this:" << this << " ucp_ep_flush_nbx()";
     request = ucp_ep_flush_nbx(eph, &param);
 
     if (UCS_PTR_IS_PTR(request)) {
@@ -321,6 +339,7 @@ bool nixlUcxMtLevelIsSupported(const nixl_ucx_mt_t mt_type) noexcept
 {
     ucp_lib_attr_t attr;
     attr.field_mask = UCP_LIB_ATTR_FIELD_MAX_THREAD_LEVEL;
+    NIXL_INFO << "this:" << " ucp_lib_query()";
     ucp_lib_query(&attr);
 
     switch(mt_type) {
@@ -343,6 +362,7 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
                                unsigned long num_workers,
                                nixl_thread_sync_t sync_mode)
 {
+    NIXL_INFO << "this:" << this << " nixlUcxContext::nixlUcxContext() IN";
     ucp_params_t ucp_params;
     ucp_config_t *ucp_config;
     ucs_status_t status = UCS_OK;
@@ -376,6 +396,7 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
         ucp_params.field_mask |= UCP_PARAM_FIELD_REQUEST_CLEANUP;
     }
 
+    NIXL_INFO << "this:" << this << " ucp_config_read()";
     ucp_config_read(NULL, NULL, &ucp_config);
 
     /* If requested, restrict the set of network devices */
@@ -387,6 +408,7 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
             dev_str = dev_str + devs[i] + ":1,";
         }
         dev_str = dev_str + devs[i] + ":1";
+        NIXL_INFO << "this:" << this << " ucp_config_modify()";
         ucp_config_modify(ucp_config, "NET_DEVICES", dev_str.c_str());
     }
 
@@ -395,18 +417,24 @@ nixlUcxContext::nixlUcxContext(std::vector<std::string> devs,
         NIXL_WARN << "Failed to modify MAX_RMA_RAILS: " << ucs_status_string(status);
     }
 
+    NIXL_INFO << "this:" << this << " ucp_init()";
     status = ucp_init(&ucp_params, ucp_config, &ctx);
     if (status != UCS_OK) {
         /* TODO: proper cleanup */
         // TODO: MSW_NET_ERROR(priv->net, "failed to ucp_init(%s)\n", ucs_status_string(status));
         return;
     }
+    NIXL_INFO << "this:" << this << " ucp_config_release()";
     ucp_config_release(ucp_config);
+    NIXL_INFO << "this:" << this << " nixlUcxContext::nixlUcxContext() OUT";
 }
 
 nixlUcxContext::~nixlUcxContext()
 {
+    NIXL_INFO << "this:" << this << " nixlUcxContext::~nixlUcxContext() IN";
+    NIXL_INFO << "this:" << this << " ucp_cleanup()";
     ucp_cleanup(ctx);
+    NIXL_INFO << "this:" << this << " nixlUcxContext::~nixlUcxContext() OUT";
 }
 
 namespace
@@ -443,6 +471,7 @@ ucp_worker* nixlUcxWorker::createUcpWorker(nixlUcxContext& ctx)
 {
     ucp_worker* worker = nullptr;
     const nixlUcpWorkerParams params(ctx.mt_type);
+    NIXL_INFO << "this:" << this << " ucp_worker_create()";
     const ucs_status_t status = ucp_worker_create(ctx.ctx, &params, &worker);
     if(status != UCS_OK) {
         const auto err_str = std::string("Failed to create UCX worker: ") +
@@ -463,12 +492,14 @@ std::string nixlUcxWorker::epAddr()
     ucp_worker_attr_t wattr;
 
     wattr.field_mask = UCP_WORKER_ATTR_FIELD_ADDRESS;
+    NIXL_INFO << "this:" << this << " ucp_worker_query()";
     const ucs_status_t status = ucp_worker_query(worker.get(), &wattr);
     if (UCS_OK != status) {
         NIXL_WARN << "Unable to query UCX endpoint address";
         return {};
     }
     const std::string result = nixlSerDes::_bytesToString(wattr.address, wattr.address_length);
+    NIXL_INFO << "this:" << this << " ucp_worker_release_address()";
     ucp_worker_release_address(worker.get(), wattr.address);
     return result;
 }
@@ -501,6 +532,7 @@ int nixlUcxContext::memReg(void *addr, std::size_t size, nixlUcxMem &mem)
         .length  = mem.size,
     };
 
+    NIXL_INFO << "this:" << this << " ucp_mem_map()";
     const ucs_status_t status = ucp_mem_map(ctx, &mem_params, &mem.memh);
     if (status != UCS_OK) {
         /* TODOL: MSW_NET_ERROR(priv->net, "failed to ucp_mem_map (%s)\n", ucs_status_string(status)); */
@@ -516,18 +548,21 @@ std::string nixlUcxContext::packRkey(nixlUcxMem &mem)
     void* rkey_buf;
     std::size_t size;
 
+    NIXL_INFO << "this:" << this << " ucp_rkey_pack()";
     const ucs_status_t status = ucp_rkey_pack(ctx, mem.memh, &rkey_buf, &size);
     if (status != UCS_OK) {
         /* TODO: MSW_NET_ERROR(priv->net, "failed to ucp_rkey_pack (%s)\n", ucs_status_string(status)); */
         return {};
     }
     const std::string result = nixlSerDes::_bytesToString(rkey_buf, size);
+    NIXL_INFO << "this:" << this << " ucp_rkey_buffer_release()";
     ucp_rkey_buffer_release(rkey_buf);
     return result;
 }
 
 void nixlUcxContext::memDereg(nixlUcxMem &mem)
 {
+    NIXL_INFO << "this:" << this << " ucp_mem_unmap()";
     ucp_mem_unmap(ctx, mem.memh);
 }
 
@@ -547,6 +582,7 @@ int nixlUcxWorker::regAmCallback(unsigned msg_id, ucp_am_recv_callback_t cb, voi
     params.cb = cb;
     params.arg = arg;
 
+    NIXL_INFO << "this:" << this << " ucp_worker_set_am_recv_handler()";
     const ucs_status_t status = ucp_worker_set_am_recv_handler(worker.get(), &params);
 
     if(status != UCS_OK) {
@@ -562,6 +598,7 @@ int nixlUcxWorker::regAmCallback(unsigned msg_id, ucp_am_recv_callback_t cb, voi
 
 int nixlUcxWorker::progress()
 {
+  NIXL_INFO << "this:" << this << " ucp_worker_progress()";
   return ucp_worker_progress(worker.get());
 }
 
@@ -570,16 +607,19 @@ nixl_status_t nixlUcxWorker::test(nixlUcxReq req)
     if(req == nullptr) {
         return NIXL_SUCCESS;
     }
+    NIXL_INFO << "this:" << this << " ucp_worker_progress()";
     ucp_worker_progress(worker.get());
     return ucx_status_to_nixl(ucp_request_check_status(req));
 }
 
 void nixlUcxWorker::reqRelease(nixlUcxReq req)
 {
+    NIXL_INFO << "this:" << this << " ucp_request_free()";
     ucp_request_free((void*)req);
 }
 
 void nixlUcxWorker::reqCancel(nixlUcxReq req)
 {
+    NIXL_INFO << "this:" << this << " ucp_request_cancel()";
     ucp_request_cancel(worker.get(), req);
 }
