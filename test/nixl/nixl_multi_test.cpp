@@ -90,9 +90,9 @@ static void dump_data(const char* name, void* data, size_t len)
 }
 #endif
 
-static void show_nixl_opt_args(nixl_opt_args_t* params)
+static void show_nixl_opt_args(const std::string name, nixl_opt_args_t* params)
 {
-    printf("[xxx.xxxxxxxxx] : Show nixl_opt_args_t\n");
+    std::cout << "[xxx.xxxxxxxxx] : Show nixl_opt_args_t(" << name << ")\n";
     for (nixlBackendH* b : params->backends) {
         std::cout << "  params.backends.backendType:" << b->getType() << "\n";
         std::cout << "  params.backends.supportsRemote:" << b->supportsRemote() << "\n";
@@ -142,7 +142,7 @@ static const std::string initiator("initiator");
 static std::vector<std::unique_ptr<uint8_t[]>> initMem(nixlAgent &agent,
                                                        nixl_reg_dlist_t &dram,
                                                        nixl_opt_args_t *extra_params,
-                                                       uint8_t val) {
+                                                       uint8_t val, std::string role) {
     std::vector<std::unique_ptr<uint8_t[]>> addrs;
 
     for (int i = 0; i < NUM_TRANSFERS; i++) {
@@ -152,7 +152,8 @@ static std::vector<std::unique_ptr<uint8_t[]>> initMem(nixlAgent &agent,
         std::fill_n(addr.get(), SIZE, _val);
         std::cout << "Allocating : " << (void *)addr.get() << ", "
                   << "Setting to 0x" << std::hex << (unsigned)_val << std::dec << std::endl;
-        dram.addDesc(nixlBlobDesc((uintptr_t)(addr.get()), SIZE, 0, ""));
+        std::string meta = role + std::to_string(i);
+        dram.addDesc(nixlBlobDesc((uintptr_t)(addr.get()), SIZE, 0, meta));
 
         addrs.push_back(std::move(addr));
     }
@@ -165,11 +166,13 @@ static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int th
     std::cout << current_time() << __func__ << thread_id << "(" << "thread_id:" << thread_id << ")" << std::endl;
 
     nixl_reg_dlist_t dram_for_ucx(DRAM_SEG);
-    auto addrs = initMem(agent, dram_for_ucx, extra_params, 0);
+    auto addrs = initMem(agent, dram_for_ucx, extra_params, 0, "target");
 
-    nixl_blob_t tgt_metadata;
-    agent.getLocalMD(tgt_metadata);
-    std::cout << current_time() << __func__ << thread_id << "() LocalMD:" << tgt_metadata  << "\n";
+    {
+        nixl_blob_t tgt_metadata;
+        agent.getLocalMD(tgt_metadata);
+        std::cout << current_time() << __func__ << thread_id << "() LocalMD:" << tgt_metadata  << "\n";
+    }
 
     std::cout << current_time() << __func__ << thread_id << "() Start Control Path metadata exchanges\n";
 
@@ -183,15 +186,21 @@ static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int th
     std::cout << current_time() << __func__ << thread_id << "() Wait for initiator and then send xfer descs\n";
     std::string message = serdes.exportStr();
     std::cout << current_time() << __func__ << thread_id << "() serdes.exportStr() is " << message << "\n";
-    nixl_status_t st_notif = NIXL_ERR_UNKNOWN;
-    std::cout << current_time() << __func__ << thread_id << "() will call nixlAgent.genNotif() in While loop\n";
-    do {
-        //std::cout << current_time() << __func__ << thread_id << "() call nixlAgent.genNotif()\n";
-        st_notif = agent.genNotif(initiator, message, extra_params);
-        if (st_notif == NIXL_SUCCESS)
-            std::cout << current_time() << __func__ << thread_id << "() CALLED nixlAgent.genNotif()\n";
-    } while (st_notif != NIXL_SUCCESS);
+    show_nixl_opt_args("extra_params", extra_params);
+
+    // Notify target information to initiator
+    {
+        std::cout << current_time() << __func__ << thread_id << "() will call nixlAgent.genNotif() in While loop\n";
+        nixl_status_t st_notif = NIXL_ERR_UNKNOWN;
+        do {
+            // spin lock
+            //std::cout << current_time() << __func__ << thread_id << "() call nixlAgent.genNotif()\n";
+            st_notif = agent.genNotif(initiator, message, extra_params);
+        } while (st_notif != NIXL_SUCCESS);
+        std::cout << current_time() << __func__ << thread_id << "() CALLED nixlAgent.genNotif()\n";
+    }
     std::cout << current_time() << __func__ << thread_id << "() End Control Path metadata exchanges\n";
+    show_nixl_opt_args("extra_params", extra_params);
 
     std::cout << current_time() << __func__ << thread_id << "() Start Data Path Exchanges\n";
     std::cout << current_time() << __func__ << thread_id << "() Waiting to receive Data from Initiator\n";
@@ -245,8 +254,10 @@ static void runTarget(const std::string &ip, int port, nixl_thread_sync_t sync_m
     std::cout << current_time() << __func__ << "() calls nixlAgent.createBackend()" << std::endl;
     agent.createBackend("UCX", params, ucx);
 
+    std::cout << current_time() << __func__ << "() Create extra_params" << std::endl;
     nixl_opt_args_t extra_params;
     extra_params.backends.push_back(ucx);
+    show_nixl_opt_args("extra_params", &extra_params);
 
     std::cout << current_time() << __func__ << "() create threads" << std::endl;
     std::vector<std::thread> threads;
@@ -263,10 +274,10 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
                             SharedNotificationState &shared_state) {
     std::cout << current_time() << __func__ << thread_id << "(" << target_ip << ", port:" << target_port << ", thread_id:" << thread_id << ")" << std::endl;
 
-    show_nixl_opt_args(extra_params);
+    show_nixl_opt_args("extra_params", extra_params);
     nixl_reg_dlist_t dram_for_ucx(DRAM_SEG);
-    auto addrs = initMem(agent, dram_for_ucx, extra_params, MEM_VAL);
-    show_nixl_opt_args(extra_params);
+    auto addrs = initMem(agent, dram_for_ucx, extra_params, MEM_VAL, "initiator");
+    show_nixl_opt_args("extra_params", extra_params);
 
     std::cout << current_time() << __func__ << thread_id << "() Start Control Path metadata exchanges\n";
     std::cout << current_time() << __func__ << thread_id << "() Exchange metadata with Target\n";
@@ -277,11 +288,21 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
 
     std::cout << current_time() << __func__ << thread_id << "() nixlAgent.fetchRemoteMD()" << std::endl;
     agent.fetchRemoteMD(target, &md_extra_params);
-    show_nixl_opt_args(&md_extra_params);
+    show_nixl_opt_args("md_extra_params", &md_extra_params);
+    {
+      std::cout << current_time() << __func__ << thread_id << "() Check Remote MD" << std::endl;
+      nixl_xfer_dlist_t descs(DRAM_SEG);
+      nixl_status_t check_remote;
+      do {
+        // spin lock
+        check_remote = agent.checkRemoteMD(target, descs);
+      } while (check_remote != NIXL_SUCCESS);
+      std::cout << current_time() << __func__ << thread_id << "() Check Remote MD == DONE" << std::endl;
+    }
 
     std::cout << current_time() << __func__ << thread_id << "() nixlAgent.sendLocalMD()" << std::endl;
     agent.sendLocalMD(&md_extra_params);
-    show_nixl_opt_args(&md_extra_params);
+    show_nixl_opt_args("md_extra_params", &md_extra_params);
 
     // Wait for notifications and populate shared state
     while (true) {
@@ -318,7 +339,9 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
 
     std::cout << current_time() << __func__ << thread_id << "() Verify Deserialized Target's Desc List at Initiator\n";
     nixl_xfer_dlist_t dram_target_ucx(&remote_serdes);
+    std::cout << current_time() << __func__ << thread_id << "():" << __LINE__ << "\n";
     nixl_xfer_dlist_t dram_initiator_ucx = dram_for_ucx.trim();
+    std::cout << current_time() << __func__ << thread_id << "():" << __LINE__ << "\n";
     dram_target_ucx.print();
 
     std::cout << current_time() << __func__ << thread_id << "() End Control Path metadata exchanges\n";
@@ -327,7 +350,7 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
 
     extra_params->notifMsg = "NoTiFiCaTiOn";
     extra_params->hasNotif = true;
-    show_nixl_opt_args(extra_params);
+    show_nixl_opt_args("extra_params", extra_params);
     // Need to do this in a loop with NIXL_ERR_NOT_FOUND
     // UCX AM with desc list is faster than listener thread can recv/load MD with sockets
     // Will be deprecated with ETCD or callbacks
@@ -345,7 +368,7 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
         exit(-1);
     }
 
-    show_nixl_opt_args(extra_params);
+    show_nixl_opt_args("extra_params", extra_params);
     std::cout << current_time() << __func__ << thread_id << "() Post the request with UCX backend\n";
     std::cout << current_time() << __func__ << thread_id << "() nixlAgent.postXferReq()\n";
     ret = agent.postXferReq(treq);
@@ -360,11 +383,11 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
     agent.releaseXferReq(treq);
     std::cout << current_time() << __func__ << thread_id << "() call nixlAgent.invalidateLocalMD()\n";
     agent.invalidateLocalMD(&md_extra_params);
-    show_nixl_opt_args(&md_extra_params);
+    show_nixl_opt_args("md_extra_params", &md_extra_params);
 
     std::cout << current_time() << __func__ << thread_id << "() Cleanup.. call nixlAgent.deregisterMem()\n";
     agent.deregisterMem(dram_for_ucx, extra_params);
-    show_nixl_opt_args(extra_params);
+    show_nixl_opt_args("extra_params", extra_params);
 
     std::cout << current_time() << __func__ << thread_id << "() Thead exit()\n";
 }
