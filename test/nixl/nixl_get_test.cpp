@@ -38,8 +38,8 @@
 
 #define LOG      std::cout << current_time() << " " << gettid() << " nixl_get_test.c:" <<__LINE__ << "] "
 #define ERR      std::cerr << current_time() << " " << gettid() << " nixl_get_test.c:" <<__LINE__ << "] "
-#define FUNC_IN  std::cout << current_time() << " " << gettid() << " " << __func__ << "()] IN "
-#define FUNC_OUT std::cout << current_time() << " " << gettid() << " " << __func__ << "()] OUT "
+#define FUNC_IN  std::cout << current_time() << " " << gettid() << "] " << __func__ << "() IN "
+#define FUNC_OUT std::cout << current_time() << " " << gettid() << "] " << __func__ << "() OUT "
 
 void printParams(const nixl_b_params_t& params, const nixl_mem_list_t& mems) {
     if (params.empty()) {
@@ -74,18 +74,6 @@ static char* current_time(void)
     return now;
 }
 
-static void dump_data(const char* name, void* data, size_t len)
-{
-    unsigned char* c = (unsigned char*)data;
-    len = (len < 100) ? len : 100;
-    printf("%s %s:", current_time(), name);
-    for (size_t i = 0; i < len; i++) {
-      printf("0x%X ", c[i]);
-    }
-    printf("\n");
-}
-
-
 static void show_nixl_opt_args(const std::string name, nixl_opt_args_t* params)
 {
     std::cout << current_time() << ": Show nixl_opt_args_t(" << name << ")\n";
@@ -107,7 +95,6 @@ static void show_nixl_opt_args(const std::string name, nixl_opt_args_t* params)
 
 static void show_nixl_notifs_t(nixl_notifs_t &notifs)
 {
-    // using nixl_notifs_t = std::unordered_map<std::string, std::vector<nixl_blob_t>>;
     if (notifs.size()) {
         std::cout << current_time() << ": Show nixl_notifs_t\n";
         std::for_each(std::begin(notifs), std::end(notifs),
@@ -119,8 +106,6 @@ static void show_nixl_notifs_t(nixl_notifs_t &notifs)
                       });
     }
 }
-
-static int check_num = 0;
 
 /**
  * This test does p2p from using PUT.
@@ -140,18 +125,24 @@ static const std::string initiator("initiator");
 static std::vector<std::unique_ptr<uint8_t[]>> initMem(nixlAgent &agent,
                                                        nixl_reg_dlist_t &dram,
                                                        nixl_opt_args_t *extra_params,
-                                                       uint8_t val, std::string role) {
+                                                       uint8_t base_val, std::vector<int> sizes,
+                                                       std::string role) {
     std::vector<std::unique_ptr<uint8_t[]>> addrs;
 
-    for (int i = 0; i < NUM_TRANSFERS; i++) {
-        auto addr = std::make_unique<uint8_t[]>(SIZE);
+    int num = sizes.size();
 
-        uint8_t _val = (val == 0) ? 0 : val + i;
-        std::fill_n(addr.get(), SIZE, _val);
-        std::cout << "Allocating : " << (void *)addr.get() << ", "
-                  << "Setting to 0x" << std::hex << (unsigned)_val << std::dec << std::endl;
+    for (int i = 0; i < num; i++) {
+        int size = sizes[i];
+        uint8_t val = (base_val == 0) ? 0 : base_val + i;
+
+        auto addr = std::make_unique<uint8_t[]>(size);
+
+        std::fill_n(addr.get(), size, val);
+        std::cout << "Allocating:" << (void *)addr.get() << ", "
+                  << "Length:" << size << ", "
+                  << "Setting to 0x" << std::hex << (unsigned)val << std::dec << std::endl;
         std::string meta = role + std::to_string(i);
-        dram.addDesc(nixlBlobDesc((uintptr_t)(addr.get()), SIZE, 0, meta));
+        dram.addDesc(nixlBlobDesc((uintptr_t)(addr.get()), size, 0, meta));
 
         addrs.push_back(std::move(addr));
     }
@@ -159,6 +150,36 @@ static std::vector<std::unique_ptr<uint8_t[]>> initMem(nixlAgent &agent,
 
     return addrs;
 }
+
+static bool checkAndDumpMem(std::vector<std::unique_ptr<uint8_t[]>> &addrs, std::vector<int> sizes, int base_val)
+{
+    if (addrs.size() != sizes.size())
+        return false;
+
+    bool result = true;
+    int num = sizes.size();
+    std::string a((char*)addrs[0].get());
+    LOG << "Check and Dump memoryes:\n";
+    std::cout << "  [0]:" << a << std::endl;
+
+    for (int i = 1; i < num; i++) {
+        int len = sizes[i];
+        auto addr = addrs[i].get();
+        uint8_t val = (base_val == 0) ? 0 : base_val + i;
+        std::cout << "  [" << i << "](len:" << len << "):";
+        for (int j = 0; j < len; j++) {
+            if (j < 20) {
+                printf("0x%X ", addr[j]);
+            }
+            if (addr[j] != val)
+                result = false;
+        }
+        std::cout << std::endl;
+    }
+    return result;
+}
+
+
 
 static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int thread_id) {
     FUNC_IN << "args(thread_id:" << thread_id << ")\n";
@@ -186,7 +207,7 @@ static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int th
         } while (check_remote != NIXL_SUCCESS);
         std::cout << current_time() << __func__ << thread_id << "() Check Remote MD == DONE\n";
     }
-    */
+*/
 
     LOG << "Get notify initiator information\n";
     nixlSerDes remote_serdes;
@@ -220,11 +241,14 @@ static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int th
     LOG << "Verify Deserialized Initiator's Desc List\n";
     nixl_xfer_dlist_t dram_initiator_ucx(&remote_serdes);
     dram_initiator_ucx.print();
-
+    std::vector<int> sizes;
+    for (int i = 0; i < dram_initiator_ucx.descCount(); i++) {
+        sizes.push_back(dram_initiator_ucx[i].len);
+    }
 
     LOG << "Now, Target Memory Allocate.\n";
     nixl_reg_dlist_t dram_for_ucx(DRAM_SEG);
-    auto addrs = initMem(agent, dram_for_ucx, extra_params, 0, "target");
+    auto addrs = initMem(agent, dram_for_ucx, extra_params, 0, sizes, "target");
     dram_for_ucx.print();
 
     LOG << "Verify Deserialized Target's Desc List\n";
@@ -259,16 +283,7 @@ static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int th
     }
 
     LOG << "Sanity Check\n";
-    bool rc = false;
-    check_num = 0;
-    rc = std::all_of(addrs.begin(), addrs.end(), [](auto &addr) {
-        dump_data("inner std::all_of()", (void*)addr.get(), SIZE);
-        auto rc_ = std::all_of(addr.get(), addr.get() + SIZE, [](int x) {
-            return x == (MEM_VAL + check_num);
-        });
-        check_num++;
-        return rc_;
-    });
+    bool rc = checkAndDumpMem(addrs, sizes, MEM_VAL);
     if (!rc) {
         ERR << "UCX Transfer failed, buffers are different\n";
     } else {
@@ -322,9 +337,14 @@ static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
                             SharedNotificationState &shared_state) {
     FUNC_IN << "args(" << target_ip << ", port:" << target_port << ", thread_id:" << thread_id << ")\n";
 
-LOG << "Create Initiator's memory\n";
+    LOG << "Create Initiator's memory\n";
+    std::string json_string = "{\"CreateDate\":'2025/05/05 12:00:01.000', \"name\",\"sample\", \"color\":true, \"systemID\":1234}";
+    int json_string_len = json_string.length();
+    std::vector<int> sizes = {json_string_len, 1024, 512, 768};
     nixl_reg_dlist_t dram_for_ucx(DRAM_SEG);
-    auto addrs = initMem(agent, dram_for_ucx, extra_params, MEM_VAL, "initiator");
+    auto addrs = initMem(agent, dram_for_ucx, extra_params, MEM_VAL, sizes, "initiator");
+    memcpy(addrs[0].get(), json_string.c_str() , json_string_len);
+    checkAndDumpMem(addrs, sizes, MEM_VAL);
 
     nixl_opt_args_t md_extra_params;
     md_extra_params.ipAddr = target_ip;
