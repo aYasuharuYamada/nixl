@@ -471,7 +471,7 @@ ucp_worker* nixlUcxWorker::createUcpWorker(nixlUcxContext& ctx)
 {
     ucp_worker* worker = nullptr;
     const nixlUcpWorkerParams params(ctx.mt_type);
-    NIXL_INFO << "this:" << this << " ucp_worker_create()";
+    NIXL_INFO << " ucp_worker_create()";
     const ucs_status_t status = ucp_worker_create(ctx.ctx, &params, &worker);
     if(status != UCS_OK) {
         const auto err_str = std::string("Failed to create UCX worker: ") +
