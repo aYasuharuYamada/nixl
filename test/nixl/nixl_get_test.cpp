@@ -30,10 +30,7 @@
 #include <vector>
 #include <unistd.h>
 
-#define NUM_TRANSFERS 2
-#define NUM_THREADS 1
-#define SIZE 1024
-//#define MEM_VAL 0xBB
+#define NUM_THREADS 2
 #define MEM_VAL 0x41
 
 #define LOG      std::cout << current_time() << " " << gettid() << " nixl_get_test.c:" <<__LINE__ << "] "
@@ -69,7 +66,7 @@ static char* current_time(void)
     struct timespec ts = (struct timespec){0};
     clock_gettime(CLOCK_REALTIME, &ts);
 
-    snprintf(now, 40, "[XX:%02ld:%02ld.%06ld] ", (ts.tv_sec%3600)/60, ts.tv_sec%60, ts.tv_nsec);
+    snprintf(now, 40, "XX:%02ld:%02ld.%06ld ", (ts.tv_sec%3600)/60, ts.tv_sec%60, ts.tv_nsec);
 
     return now;
 }
@@ -122,6 +119,17 @@ struct SharedNotificationState {
 static const std::string target("target");
 static const std::string initiator("initiator");
 
+
+static const std::string json_string0 = "{\"agent-num\":0, \"CreateDate\":'2025/05/05 12:00:00.000', \"name\",\"sample\", \"color\":true, \"systemID\":1234, \"comment\":\"this is for initiator0.\"}";
+static int json_string0_len = json_string0.length();
+
+static const std::string json_string1 = "{\"agent-num\":1, \"CreateDate\":'2025/05/05 12:00:01.000', \"name\",\"sample\", \"color\":true, \"systemID\":4321, \"comment\":\"Happy birthday to you~ Happy birthday to you~\"}";
+static const int json_string1_len = json_string1.length();
+
+static const std::vector<std::string> json_strings = {json_string0, json_string1};
+static const std::vector<std::vector<int>> json_sizes = {{json_string0_len, 1024,  512, 768},
+                                                         {json_string1_len,  384, 2048, 4*1024*1024}};
+
 static std::vector<std::unique_ptr<uint8_t[]>> initMem(nixlAgent &agent,
                                                        nixl_reg_dlist_t &dram,
                                                        nixl_opt_args_t *extra_params,
@@ -133,7 +141,9 @@ static std::vector<std::unique_ptr<uint8_t[]>> initMem(nixlAgent &agent,
 
     for (int i = 0; i < num; i++) {
         int size = sizes[i];
-        uint8_t val = (base_val == 0) ? 0 : base_val + i;
+        uint8_t val = 0;
+        if (i != 0 && base_val)
+            val = base_val + i;
 
         auto addr = std::make_unique<uint8_t[]>(size);
 
@@ -191,27 +201,11 @@ static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int th
     agent.getLocalMD(tgt_metadata);
     LOG << "LocalMD:" << tgt_metadata << std::endl;
 
-/*
-    nixl_opt_args_t md_extra_params;
-    md_extra_params.ipAddr = "127.0.0.1";
-    LOG << "nixlAgent.fetchRemoteMD()\n";
-    agent.fetchRemoteMD(target, &md_extra_params);
-    show_nixl_opt_args("md_extra_params", &md_extra_params);
-    {
-        std::cout << current_time() << __func__ << thread_id << "() Check Remote MD\n";
-        nixl_xfer_dlist_t descs(DRAM_SEG);
-        nixl_status_t check_remote;
-        do {
-            // spin lock
-            check_remote = agent.checkRemoteMD(initiator, descs);
-        } while (check_remote != NIXL_SUCCESS);
-        std::cout << current_time() << __func__ << thread_id << "() Check Remote MD == DONE\n";
-    }
-*/
+    while (true) {
+        LOG << "Get notify remote information\n";
+        nixlSerDes remote_serdes;
+        std::string remote_agent_name;
 
-    LOG << "Get notify initiator information\n";
-    nixlSerDes remote_serdes;
-    {
         LOG << "will call nixlAgent.getNotif() in While loop\n";
         nixl_notifs_t notifs;
         do {
@@ -223,79 +217,91 @@ static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int th
             }
             //LOG << "nixlAgent.getNotifs()=" << ret << ", notifs.size()=" << notifs.size() << std::endl;
         } while(ret != NIXL_SUCCESS || notifs.size() == 0);
-
         LOG << "will call nixlAgent.getNotif() DONE\n";
+
+        //LOG << "Show extra_params After nixlAgent.getNotifs()\n";
+        //show_nixl_opt_args("extra_params", extra_params);
+
         show_nixl_notifs_t(notifs);
+        for (auto iter = notifs.begin(); iter != notifs.end(); iter++) {
+            LOG << "Remote Agent Name: " << iter->first << "\n";
+            remote_agent_name = iter->first;
 
-        if (notifs[initiator].empty()) {
-            ERR << "Get Notifs but empty.\n";
-            exit(-1);
-        }
-        LOG << "Keep Initiator's notif\n";
-        for (const auto &notif : notifs[initiator]) {
-            LOG << "notif:" << notif;
-            remote_serdes.importStr(notif);
-        }
-    }
-    LOG << "So, as here, target knows initiators memory info(num and size)!\n";
-    LOG << "Verify Deserialized Initiator's Desc List\n";
-    nixl_xfer_dlist_t dram_initiator_ucx(&remote_serdes);
-    dram_initiator_ucx.print();
-    std::vector<int> sizes;
-    for (int i = 0; i < dram_initiator_ucx.descCount(); i++) {
-        sizes.push_back(dram_initiator_ucx[i].len);
-    }
+            if (notifs[remote_agent_name].empty()) {
+                ERR << "Get Notifs but empty.\n";
+                exit(-1);
+            }
+            LOG << "Keep Remote's notif\n";
+            for (const auto &notif : notifs[remote_agent_name]) {
+                LOG << "notif:" << notif << std::endl;
+                remote_serdes.importStr(notif);
+            }
 
-    LOG << "Now, Target Memory Allocate.\n";
-    nixl_reg_dlist_t dram_for_ucx(DRAM_SEG);
-    auto addrs = initMem(agent, dram_for_ucx, extra_params, 0, sizes, "target");
-    dram_for_ucx.print();
+            LOG << "So, as here, target knows remotes memory info(num and size)!\n";
+            LOG << "Verify Deserialized Remote's Desc List\n";
+            nixl_xfer_dlist_t dram_remote_ucx(&remote_serdes);
+            dram_remote_ucx.print();
+            std::vector<int> sizes;
+            for (int i = 0; i < dram_remote_ucx.descCount(); i++) {
+                sizes.push_back(dram_remote_ucx[i].len);
+            }
 
-    LOG << "Verify Deserialized Target's Desc List\n";
-    nixl_xfer_dlist_t dram_target_ucx = dram_for_ucx.trim();
-    dram_target_ucx.print();
+            LOG << "Now, Target Memory Allocate.\n";
+            nixl_reg_dlist_t dram_for_ucx(DRAM_SEG);
+            auto addrs = initMem(agent, dram_for_ucx, extra_params, 0, sizes, "target");
+            dram_for_ucx.print();
 
-    // Need to do this in a loop with NIXL_ERR_NOT_FOUND
-    // UCX AM with desc list is faster than listener thread can recv/load MD with sockets
-    // Will be deprecated with ETCD or callbacks
-    extra_params->notifMsg = "NoTiFiCaTiOn";
-    extra_params->hasNotif = true;
-    nixlXferReqH *treq;
-    ret = NIXL_SUCCESS;
-    LOG << "agent.createXferReq()\n";
-    do {
-        ret = agent.createXferReq(NIXL_READ, dram_target_ucx, dram_initiator_ucx,
-                                  initiator, treq, extra_params);
-    } while (ret == NIXL_ERR_NOT_FOUND);
+            LOG << "Verify Deserialized Target's Desc List\n";
+            nixl_xfer_dlist_t dram_target_ucx = dram_for_ucx.trim();
+            dram_target_ucx.print();
 
-    if (ret != NIXL_SUCCESS) {
-        ERR << "Error creating transfer request " << ret << "\n";
-        exit(-1);
-    }
+            // Need to do this in a loop with NIXL_ERR_NOT_FOUND
+            // UCX AM with desc list is faster than listener thread can recv/load MD with sockets
+            // Will be deprecated with ETCD or callbacks
+            extra_params->notifMsg = "NoTiFiCaTiOn";
+            extra_params->hasNotif = true;
+            nixlXferReqH *treq;
+            ret = NIXL_SUCCESS;
+            LOG << "agent.createXferReq()\n";
+            do {
+                ret = agent.createXferReq(NIXL_READ, dram_target_ucx, dram_remote_ucx,
+                                          remote_agent_name, treq, extra_params);
+            } while (ret == NIXL_ERR_NOT_FOUND);
 
-    LOG << "Post the request with UCX backend agent.postXferReq()\n";
-    ret = agent.postXferReq(treq);
+            if (ret != NIXL_SUCCESS) {
+                ERR << "Error creating transfer request " << ret << "\n";
+                exit(-1);
+            }
 
-    LOG << " Waiting for completion\n";
-    while (ret != NIXL_SUCCESS) {
-        ret = agent.getXferStatus(treq);
-        assert(ret >= 0);
-    }
+            LOG << "Post the request with UCX backend agent.postXferReq()\n";
+            ret = agent.postXferReq(treq);
 
-    LOG << "Sanity Check\n";
-    bool rc = checkAndDumpMem(addrs, sizes, MEM_VAL);
-    if (!rc) {
-        ERR << "UCX Transfer failed, buffers are different\n";
-    } else {
-        LOG << "Transfer completed and Buffers match with Initiator\n";
-        LOG << "UCX Transfer Success!!!\n";
-    }
+            LOG << " Waiting for completion\n";
+            while (ret != NIXL_SUCCESS) {
+                ret = agent.getXferStatus(treq);
+                assert(ret >= 0);
+            }
 
-    LOG << "Completed Sending Data using UCX backend\n";
-    agent.releaseXferReq(treq);
+            LOG << "Sanity Check\n";
+            bool rc = checkAndDumpMem(addrs, sizes, MEM_VAL);
+            if (!rc) {
+                ERR << "UCX Transfer failed, buffers are different\n";
+            } else {
+                LOG << "Transfer completed and Buffers match with Remote\n";
+                LOG << "UCX Transfer Success!!!\n";
+            }
 
-    LOG << "Cleanup..\n";
-    agent.deregisterMem(dram_for_ucx, extra_params);
+            LOG << "Completed Sending Data using UCX backend\n";
+            agent.releaseXferReq(treq);
+
+            LOG << "Cleanup memory\n";
+            agent.deregisterMem(dram_for_ucx, extra_params);
+
+            LOG << "Cleanup remote agent. agent.invalidateRemoteMD()\nThis must be needed for next transfer.";
+            agent.invalidateRemoteMD(remote_agent_name);
+        } //for (auto iter = notifs.begin();
+        LOG << "##### LOOP END ####################################\n";
+    } // while(true)
 
     LOG << "Thead exit()\n";
 }
@@ -310,7 +316,6 @@ static void runTarget(const std::string &ip, int port, nixl_thread_sync_t sync_m
     nixlAgent agent(target, cfg);
 
     nixl_b_params_t params = {
-        //{ "num_workers", "4" },
         { "num_workers", "1" },
     };
     nixlBackendH *ucx;
@@ -324,7 +329,7 @@ static void runTarget(const std::string &ip, int port, nixl_thread_sync_t sync_m
 
     LOG << "create threads\n";
     std::vector<std::thread> threads;
-    for (int i = 0; i < NUM_THREADS; i++)
+    for (int i = 0; i < 1; i++)
         threads.emplace_back(targetThread, std::ref(agent), &extra_params, i);
 
     LOG << "thread will join\n";
@@ -332,91 +337,20 @@ static void runTarget(const std::string &ip, int port, nixl_thread_sync_t sync_m
         thread.join();
 }
 
-static void initiatorThread(nixlAgent &agent, nixl_opt_args_t *extra_params,
-                            const std::string &target_ip, int target_port, int thread_id,
-                            SharedNotificationState &shared_state) {
+static void initiatorThread(const std::string &target_ip, int target_port, nixl_thread_sync_t sync_mode, int thread_id)
+{
     FUNC_IN << "args(" << target_ip << ", port:" << target_port << ", thread_id:" << thread_id << ")\n";
 
-    LOG << "Create Initiator's memory\n";
-    std::string json_string = "{\"CreateDate\":'2025/05/05 12:00:01.000', \"name\",\"sample\", \"color\":true, \"systemID\":1234}";
-    int json_string_len = json_string.length();
-    std::vector<int> sizes = {json_string_len, 1024, 512, 768};
-    nixl_reg_dlist_t dram_for_ucx(DRAM_SEG);
-    auto addrs = initMem(agent, dram_for_ucx, extra_params, MEM_VAL, sizes, "initiator");
-    memcpy(addrs[0].get(), json_string.c_str() , json_string_len);
-    checkAndDumpMem(addrs, sizes, MEM_VAL);
-
-    nixl_opt_args_t md_extra_params;
-    md_extra_params.ipAddr = target_ip;
-    md_extra_params.port = target_port;
-
-    LOG << "nixlAgent.fetchRemoteMD()\n";
-    agent.fetchRemoteMD(target, &md_extra_params);
-
-    LOG << "nixlAgent.sendLocalMD()\n";
-    agent.sendLocalMD(&md_extra_params);
-
-    // Notify initiator information to target
-    nixlSerDes serdes;
-    assert(dram_for_ucx.trim().serialize(&serdes) == NIXL_SUCCESS);
-    std::string message = serdes.exportStr();
-
-    extra_params->ipAddr = target_ip;
-    extra_params->port = target_port;
-    {
-        LOG << "will call nixlAgent.genNotif() to tell memory info in While loop\n";
-        nixl_status_t st_notif = NIXL_ERR_UNKNOWN;
-        do {
-            // spin lock
-            LOG << "call nixlAgent.genNotif()\n";
-            st_notif = agent.genNotif(target, message, extra_params);
-        } while (st_notif != NIXL_SUCCESS);
-        LOG << "CALLED nixlAgent.genNotif()\n";
-    }
-
-    {
-        LOG << "wait NotifAmCallback\n";
-        nixl_status_t st_getNotif;
-        nixl_notifs_t am_notifs;
-        do {
-            // spin lock
-            //LOG << "call nixlAgent.getNotif()\n";
-            st_getNotif = agent.getNotifs(am_notifs, extra_params);
-            if (am_notifs.size() == 0) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
-        } while (st_getNotif != NIXL_SUCCESS || am_notifs.size() == 0);
-        LOG << "CALLED nixlAgent.getNotif()\n";
-        show_nixl_notifs_t(am_notifs);
-    }
-
-    LOG << "Data is transrated.\n";
-
-    LOG << "call nixlAgent.invalidateLocalMD()\n";
-    agent.invalidateLocalMD(&md_extra_params);
-    show_nixl_opt_args("md_extra_params", &md_extra_params);
-
-    LOG << "Cleanup.. call nixlAgent.deregisterMem()\n";
-    agent.deregisterMem(dram_for_ucx, extra_params);
-    show_nixl_opt_args("extra_params", extra_params);
-
-    LOG << "Thead exit()\n";
-}
-
-static void runInitiator(const std::string &target_ip, int target_port, nixl_thread_sync_t sync_mode) {
-    FUNC_IN << "args(" << target_ip << ", port:" << target_port << ")\n";
 
     nixlAgentConfig cfg(true, true, 0, sync_mode);
     cfg.pthrDelay = 1000*1000; //in us
 
-    LOG << "Starting Agent for initiator\n";
-    nixlAgent agent(initiator, cfg);
+    std::string local_agent_name = initiator + std::to_string(thread_id);
+    LOG << "Starting Agent for " << local_agent_name << std::endl;
+    nixlAgent agent(local_agent_name, cfg);
 
     nixl_mem_list_t mems;
     nixl_b_params_t params;
-    //nixl_b_params_t params = {
-    //    { "num_workers", "4" },
-    //};
     nixlBackendH *ucx;
 
     LOG << "calls nixlAgent.getPluginParams()\n";
@@ -437,13 +371,92 @@ static void runInitiator(const std::string &target_ip, int target_port, nixl_thr
         printParams(init1, mems1);
     }
 
-    SharedNotificationState shared_state;
+    nixl_opt_args_t md_extra_params;
+    md_extra_params.ipAddr = target_ip;
+    md_extra_params.port = target_port;
+
+    LOG << "nixlAgent.fetchRemoteMD()\n";
+    agent.fetchRemoteMD(target, &md_extra_params);
+    // fetch された remoteMD は非同期で受信され、受信されないと genNotif が成功しない
+    // 一回受信できたら、その後は genNotif はすぐ成功する
+
+    // loop 2 times for thread_id=0
+    int max_loops = (0 == thread_id) ? 2 : 1;
+    for (int loops = 0; loops < max_loops; loops++) {
+        SharedNotificationState shared_state;
+
+        LOG << "Create Initiator's memory\n";
+        nixl_reg_dlist_t dram_for_ucx(DRAM_SEG);
+        auto addrs = initMem(agent, dram_for_ucx, &extra_params, MEM_VAL+thread_id, json_sizes[thread_id], local_agent_name);
+        memcpy(addrs[0].get(), json_strings[thread_id].c_str() , strlen(json_strings[thread_id].c_str()));
+        checkAndDumpMem(addrs, json_sizes[thread_id], MEM_VAL);
+
+        LOG << "nixlAgent.sendLocalMD()\n";
+        agent.sendLocalMD(&md_extra_params);
+
+        // Notify initiator information to target
+        nixlSerDes serdes;
+        assert(dram_for_ucx.trim().serialize(&serdes) == NIXL_SUCCESS);
+        std::string message = serdes.exportStr();
+
+        extra_params.ipAddr = target_ip;
+        extra_params.port = target_port;
+        {
+            LOG << "will call nixlAgent.genNotif() to tell memory info in While loop\n";
+            nixl_status_t st_notif;
+            do {
+                // spin lock
+                //LOG << "call nixlAgent.genNotif()\n";
+                st_notif = agent.genNotif(target, message, &extra_params);
+                if (st_notif == NIXL_ERR_NOT_FOUND) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
+                //LOG << "call nixlAgent.genNotif()=" << st_notif << std::endl;
+            } while (st_notif != NIXL_SUCCESS);
+            LOG << "CALLED nixlAgent.genNotif()\n";
+        }
+
+        {
+            LOG << "wait NotifAmCallback\n";
+            nixl_status_t st_getNotif;
+            nixl_notifs_t am_notifs;
+            do {
+                // spin lock
+                //LOG << "call nixlAgent.getNotif()\n";
+                st_getNotif = agent.getNotifs(am_notifs, &extra_params);
+                if (am_notifs.size() == 0) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
+            } while (st_getNotif != NIXL_SUCCESS || am_notifs.size() == 0);
+            LOG << "CALLED nixlAgent.getNotif()\n";
+            show_nixl_notifs_t(am_notifs);
+        }
+
+        LOG << "Data is transrated.\n";
+
+        LOG << "call nixlAgent.invalidateLocalMD()\n";
+        agent.invalidateLocalMD(&md_extra_params);
+        show_nixl_opt_args("md_extra_params", &md_extra_params);
+
+        LOG << "Cleanup.. call nixlAgent.deregisterMem()\n";
+        agent.deregisterMem(dram_for_ucx, &extra_params);
+        show_nixl_opt_args("extra_params", &extra_params);
+
+        LOG << "##### LOOP END ####################################\n";
+    } // loop
+
+    LOG << "Thead exit()\n";
+}
+
+
+static void runInitiator(const std::string &target_ip, int target_port, nixl_thread_sync_t sync_mode) {
+    FUNC_IN << "args(" << target_ip << ", port:" << target_port << ")\n";
 
     LOG << "create threads\n";
     std::vector<std::thread> threads;
     for (int i = 0; i < NUM_THREADS; i++)
-        threads.emplace_back(initiatorThread, std::ref(agent), &extra_params,
-                             target_ip, target_port, i, std::ref(shared_state));
+        threads.emplace_back(initiatorThread, target_ip, target_port,
+                             sync_mode, i);
 
     LOG "thread will join\n";
     for (auto &thread : threads)
@@ -466,8 +479,8 @@ int main(int argc, char *argv[]) {
 
     std::transform(role.begin(), role.end(), role.begin(), ::tolower);
 
-    if (!role.compare(initiator) && !role.compare(target)) {
-        LOG << "Invalid role. Use 'initiator' or 'target'. Currently "<< role <<std::endl;
+    if (!role.find(initiator) && !role.compare(target)) {
+        LOG << "Invalid role. Use 'initiator*' or 'target'. Currently "<< role <<std::endl;
         return 1;
     }
 
@@ -494,5 +507,6 @@ int main(int argc, char *argv[]) {
     else
         runInitiator(target_ip, target_port, sync_mode);
 
+    FUNC_OUT << " for role:" << role << std::endl;
     return 0;
 }
