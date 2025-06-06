@@ -148,10 +148,11 @@ static std::vector<std::unique_ptr<uint8_t[]>> initMem(nixlAgent &agent,
         auto addr = std::make_unique<uint8_t[]>(size);
 
         std::fill_n(addr.get(), size, val);
+        std::string meta = role + std::to_string(i);
         std::cout << "Allocating:" << (void *)addr.get() << ", "
                   << "Length:" << size << ", "
-                  << "Setting to 0x" << std::hex << (unsigned)val << std::dec << std::endl;
-        std::string meta = role + std::to_string(i);
+                  << "Setting to 0x" << std::hex << (unsigned)val << std::dec << ", "
+                  << "meta info:" << meta << std::endl;
         dram.addDesc(nixlBlobDesc((uintptr_t)(addr.get()), size, 0, meta));
 
         addrs.push_back(std::move(addr));
@@ -239,7 +240,7 @@ static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int th
 
             LOG << "So, as here, target knows remotes memory info(num and size)!\n";
             LOG << "Verify Deserialized Remote's Desc List\n";
-            nixl_xfer_dlist_t dram_remote_ucx(&remote_serdes);
+            nixl_reg_dlist_t dram_remote_ucx(&remote_serdes);
             dram_remote_ucx.print();
             std::vector<int> sizes;
             for (int i = 0; i < dram_remote_ucx.descCount(); i++) {
@@ -252,8 +253,10 @@ static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int th
             dram_for_ucx.print();
 
             LOG << "Verify Deserialized Target's Desc List\n";
-            nixl_xfer_dlist_t dram_target_ucx = dram_for_ucx.trim();
-            dram_target_ucx.print();
+            nixl_xfer_dlist_t xfer_target_ucx = dram_for_ucx.trim();
+            xfer_target_ucx.print();
+            nixl_xfer_dlist_t xfer_remote_ucx = dram_remote_ucx.trim();
+            xfer_remote_ucx.print();
 
             // Need to do this in a loop with NIXL_ERR_NOT_FOUND
             // UCX AM with desc list is faster than listener thread can recv/load MD with sockets
@@ -264,7 +267,7 @@ static void targetThread(nixlAgent &agent, nixl_opt_args_t *extra_params, int th
             ret = NIXL_SUCCESS;
             LOG << "agent.createXferReq()\n";
             do {
-                ret = agent.createXferReq(NIXL_READ, dram_target_ucx, dram_remote_ucx,
+                ret = agent.createXferReq(NIXL_READ, xfer_target_ucx, xfer_remote_ucx,
                                           remote_agent_name, treq, extra_params);
             } while (ret == NIXL_ERR_NOT_FOUND);
 
@@ -370,7 +373,6 @@ static void initiatorThread(const std::string &target_ip, int target_port, nixl_
         LOG << "called nixlAgent.getBackendParams()=" << ret1 << std::endl;
         printParams(init1, mems1);
     }
-
     nixl_opt_args_t md_extra_params;
     md_extra_params.ipAddr = target_ip;
     md_extra_params.port = target_port;
@@ -390,13 +392,14 @@ static void initiatorThread(const std::string &target_ip, int target_port, nixl_
         auto addrs = initMem(agent, dram_for_ucx, &extra_params, MEM_VAL+thread_id, json_sizes[thread_id], local_agent_name);
         memcpy(addrs[0].get(), json_strings[thread_id].c_str() , strlen(json_strings[thread_id].c_str()));
         checkAndDumpMem(addrs, json_sizes[thread_id], MEM_VAL);
+        dram_for_ucx.print();
 
         LOG << "nixlAgent.sendLocalMD()\n";
         agent.sendLocalMD(&md_extra_params);
 
         // Notify initiator information to target
         nixlSerDes serdes;
-        assert(dram_for_ucx.trim().serialize(&serdes) == NIXL_SUCCESS);
+        assert(dram_for_ucx.serialize(&serdes) == NIXL_SUCCESS);
         std::string message = serdes.exportStr();
 
         extra_params.ipAddr = target_ip;
